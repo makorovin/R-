@@ -304,10 +304,9 @@ length(unique(df$id))
 * для каждой страницы и характеристики получить значение характеристики по соответствующему запросу css или xpath
 
 Скачаем страницы всех ранее найденных объявлений. Довольно часто возникают следующие проблемы:
-* при запросе GET R отправляет на сервер заголовки по умолчанию и выдает этим свою нечеловеческую природу. Это вызывает автоматическую переадресацию на страницу капчи (Captcha). Для обхода следует изучить, какие заголовки отправляет Ваш браузер. Это можно сделать на панели [Network](https://stackoverflow.com/questions/4423061/view-http-headers-in-google-chrome) в DevTools в Chrome. В GET заголовки можно передать в аргументах с помощью add_headers("h1_name"="h1_value","h2_name"="h2_value",...)
+* при запросе GET R отправляет на сервер заголовки по умолчанию и выдает этим свою нечеловеческую природу. Это вызывает автоматическую переадресацию на страницу капчи (Captcha). Для обхода следует изучить, какие заголовки отправляет Ваш браузер. Это можно сделать на панели [Network](https://stackoverflow.com/questions/4423061/view-http-headers-in-google-chrome) в DevTools в Chrome. В GET заголовки можно передать в аргументах с помощью add_headers("h1_name"="h1_value","h2_name"="h2_value",...). Заголовки нужно выбирать среди тех, где есть User-Agent, возможно, cookies(но обычно можно обойтись без них), главное здесь - экспериментировать и пробовать разные комбинации, если вдруг Вы натолкнулсь на captcha (посмотреть, натолкнулись ли Вы можно с помощью ф-ии xml_text(документ всей страницы))
 * R может генерировать запросы довольно часто (несколько раз в секунду). Сервер отслеживает IP адреса, отправляющие запросы слишком часто, и перенаправляет их на страницу капчи. Для обхода этого можно применять ф-ю Sys.sleep(time_in_seconds), которая останавливает выполнение кода на заданное кол-во секунд
-
-
+Выглядит это так
 ```{r}
 base_page_url <- "https://www.cian.ru/rent/commercial/"
 ad_pages <- lapply(links_text, function(link) {
@@ -323,15 +322,44 @@ ad_pages <- lapply(links_text, function(link) {
 length(ad_pages)
 xml_text(ad_pages[[84]])
 ```
-Теперь найдем названия всех характеристик
+Скачать страницы получилось. Теперь найдем названия всех характеристик
 
 ```{r}
 html_nodes(ad_pages[[1]],".cf-comm-offer-detail__prop-name")
-characteristics <- lapply(ad_pages, function(ad_page){
-  html_nodes(ad_page,".cf-comm-offer-detail__prop-name") %>% 
-  lapply(., xml_text())
-  
+characteristics_by_ad_page <- lapply(ad_pages, function(ad_page){
+  char_names_xml <- html_nodes(ad_page,".cf-comm-offer-detail__prop-name")
+  xml_text(char_names_xml)
 })
+characteristics <- characteristics_by_ad_page %>% unlist() %>% unique()
+length(characteristics)
+```
+Всего получилось 36 уникальных названий характеристик. Естественно, только несколько будут присутствовать в большинстве объявлений, поэтому итоговая таблица получится разреженной (с многочисленными пропущенными значениями)
+
+Теперь будем искать значение каждой характеристики во всех объявлениях
+
+```{r}
+# Странно, но такие запросы по поиску элементов с совпадающим текстом не работают для русского
+xml_find_all(ad_pages[[1]],"//text()[contains(.,'с')]")
+# Судя по всему в R какие-то проблемы с поиском русских символов через xpath,
+# что ж, придется выкручиваться
+get_value_by_ch_name <- function(ch1,page){
+  characterists_bool_vect <- lapply(xml_find_all(page,"//dt"),function(ch2){
+    ch1==xml_text(ch2)})    %>%unlist()
+  ch_values_sublist <- xml_nodes(page,".cf-comm-offer-detail__prop-val")[characterists_bool_vect]
+  characterists_values <- if(length(ch_values_sublist)>0) ch_values_sublist %>% xml_text() else NA
+  characterists_values
+}
+get_value_by_ch_name("Лифты:",ad_pages[[34]])
+```
+Отлично. Теперь точно можно получать значеия характеристик
+```{r}
+characteristics_matrix <- lapply(ad_pages,function(ad_page){
+  lapply(characteristics, function(ch){get_value_by_ch_name(ch,ad_page)}) %>% unlist()
+})
+char_df <- data.frame(a)
+```
+```{r}
+characteristics_by_ad_page[34]
 ```
 
 
