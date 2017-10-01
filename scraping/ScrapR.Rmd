@@ -104,93 +104,221 @@ read_html(http_response)
 ```{r}
 ad_class_name <- "offer-container--38nzf"
 ```
-Для поиска элементов xml в rvest есть функция xml_find_all.На вход она принимает xml_document или xml_element, а также строку запроса XPath. Для написания таких запросов следует ознакомиться с [документацией](https://www.w3schools.com/xml/xml_xpath.asp).
+Для поиска элементов xml в rvest есть функция xml_find_all. На вход она принимает xml_document или xml_element, а также строку запроса XPath. Для написания таких запросов следует ознакомиться с [документацией](https://www.w3schools.com/xml/xml_xpath.asp).
 
 ```{r}
-
-```
-
-
-```{r}
-headers_class_name <- "header-link--22fgv"
-description_class_name <- "description--20a7r description--bucket2--1thVs"
-metro_class_name <- "underground-header--A7XgS"
-
-
 # Используем xmlPath для получения списка объявлений //* - все элементы, [содержащие атрибут (@) class со значением имени класса объявления]
-ads <- xml_find_all(xml_resp, sprintf("//*[contains(@class, '%s')]",ad_class_name))
+ads <- xml_find_all(xml_response, sprintf("//*[contains(@class, '%s')]",ad_class_name))
 # Посмотрим на полученный список
 ads
 # Посмотрим на первый элемент - xml_nodeset - объявление
 ads[1]
+```
+То же можно сделать, используя [css selectors](https://www.w3schools.com/cssref/css_selectors.asp) и ф-ю html_node(xml_doc, css_selector). Для поиска по имени атрибута class в css нужно добавить перед именем "."
+```{r}
+paste(".",ad_class_name,sep="")
+ads <- html_nodes(xml_response, paste(".",ad_class_name,sep=""))
+# Посмотрим на полученный список
+ads
+```
+Посмотрим на первый элемент - xml_nodeset - объявление
+```{r}
+ads[1]
+```
+
+Для получения текста из элементов можно использовать xml_text(xml_doc). Поосмотрим, что получится, если передать в ф-ю целое объявление
+
+```{r}
+xml_text(ads[1])
+```
+Похоже на то, что мы действительно выделили объявление, однако общий текст составлен последоватеьно из всех текстовых элементов внутри объявления. С таким текстом неудобно работать.
+
+Объявление, как и документ, имеет свою структуру. Необходимые данные внутри него представлены в виде дерева и добыть их можно аналогичными способами. Запишем имена классов для элементов заголовка, описания и станции метро
+
+```{r}
+headers_class_name <- "header-link--22fgv"
+description_class_name <- "description--20a7r"
+metro_class_name <- "underground-header--A7XgS"
 
 # Для извлечения заголовка из первого объявления можно снова использовать xmlPath
+# Нам нужны все(*) потомки (descendant) [содержащие имя класса, 
+# соответсвующее имени класса для заголовков]
 ad_header <- xml_find_first(ads[1],sprintf("descendant::*[contains(@class,'%s')]",headers_class_name))
 ad_header
+```
+Или снова используем css selector "." для class
+```{r}
+ad_header <- html_node(ads[1],paste(".",headers_class_name,sep=""))
+ad_header
+```
+Или более общее, но менее безопасное в случае неуникальных или коротких имен [class~=имя_класса], class~= означает поиск элемента, атрибут class которого содержит имя_класса
+```{r}
+ad_header <- html_node(ads[1],sprintf("[class~=%s]",headers_class_name))
+ad_header
+```
+
+Выделим текст заголовка
+```{r}
 xml_text(ad_header)
+```
+То, что нужно! Стоит отметить, что в данном случае можно найти элементы заголовков, описаний сразу в исходном документе, пропустив выделение элементов объявлений. Однако это работает только для хорошо размеченных страниц, и даже для них безопаснее сначала найти целые объявления, а уже внутри них искать нужную информацию. Это также позволяет обнаружить, в каком объявлении не указана информация, например, о станции метро
+
+В R можно передать соответствующей ф-ии сразу все объявления
+```{r}
 # Получим список заголовков всех объявлений на странице
-# Можно искать заголовки в исходном документе, но это небезопасно,
-# т.к. в документе могут содержаться элементы с таким же именем class (такое встречается часто),
-# не относящиеся к объявлениям. Поэтому заголовки следует
-# извлекать из уже добытых элементов объявлений
+ads_headers <- html_node(ads,paste(".",headers_class_name,sep=""))
+# или
+ads_headers <- xml_find_all(ads,sprintf("descendant::*[contains(@class,'%s')]",headers_class_name))
+print(paste("Длина списка заголовков соответствует длине списка объявлений:",if(length(ads_headers)==length(ads)) "да"  else "Нет"))
+print(paste("Первый заголовок:",xml_text(ads_headers[1])))
+```
 
-# Можно выбрать другой путь и использовать css
-html_node(ads[[1]],".header-link--22fgv")
-
-html_text(html_node(ads[[1]],".header-link--22fgv"))
-
-html_node()
-
-xml_find_first(ads,sprintf("descendant::*[contains(@class,'%s')]",headers_class_name))
-html_node(ads,".header-link--22fgv")
-
+Пришло время скачать объявления с нескольких страниц. Для этого напишем некоторые функции. В них будет использоваться xml_path. Попрактикуйтесь и попробуйте использовать альтернативные методы html_node и css для поиска элементов и query для запросов GET
+```{r}
+# Для получения xml_document путем отправки запроса GET
+# по адресу страницы с объявлениями с различными номерами (page_nums)
 get_pages_content <- function(page_nums){
   lapply(page_nums, function(page_n){
     GET(paste(base_url,sprintf("page=%d",page_n),sep="&")) %>% content()
   })
 }
-
+# Ф-я находит все объявления на странице
 parse_page_ads <- function(page) {
   xml_find_all(page, sprintf("//*[contains(@class, '%s')]",ad_class_name))
 }
 
-
+# По заданному имени класса ф-я находит в объявлениях нужные элементы
 parse_many_ads_by_class_name <- function(ads,class_name) {
   parse_ad_info_by_class_name <- function(ad, class_name) {
   xml_find_first(ad,sprintf("descendant::*[contains(@class,'%s')]",class_name))
   }
   lapply(ads,function(ad){
-    parse_ad_info_by_class_name(ad,headers_class_name)
+    parse_ad_info_by_class_name(ad,class_name)
     })
 }
 
+# Скачаем первые 3 страницы
 pages <- get_pages_content(1:3)
 pages
-
+```
+На страницах найдем все объявления. Ф-я lapply(iterable,FUN) вернет список списков объявлений, поэтому следует передать ее результат ф-ии unlist без рекурсии, т.е без разворачивания уже развернутых элементов
+```{r}
 ads <- lapply(pages,parse_page_ads) %>% unlist(., recursive=FALSE)
+print(length(ads))
 ads[1:3]
-
+```
+Теперь для всех объявлений на 3-х страницах найдем заголовки
+```{r}
 headers <- parse_many_ads_by_class_name(ads,headers_class_name)
-headers[1:3]
-
-
-descriptions <- parse_many_ads_by_class_name(ads,description_class_name)
-descriptions[1:3]
-
-links_text <- lapply(headers, function(h){xml_attr(h,"href")}) %>% unlist()
-links_text
-
+headers[1]
 headers_text <- lapply(headers, xml_text) %>% unlist()
-head(headers_text,3)
-tail(headers_text,3)
+headers_text[1:3]
+```
+
+Сделаем то же самое для текстовых описаний
+```{r}
+descriptions <- parse_many_ads_by_class_name(ads,description_class_name)
+descriptions[1]
 descriptions_text <- lapply(descriptions, xml_text) %>% unlist()
-(df <- data.frame(header = headers_text,link = links_text, description = descriptions_text))
-colnames(df) <- c("header","link","description")
-colnames(df)
-df[1:3,1]
+descriptions_text[1]
+```
+Для станций метро
+```{r}
+metro_stations <- parse_many_ads_by_class_name(ads,metro_class_name)
+metro_stations[1]
+metro_stations_text <- lapply(metro_stations, xml_text) %>% unlist()
+metro_stations_text
+
+```
+Отлично, видно, что станция метро указана не для всех объявлений, при этом длина списка станций соответствует кол-ву объявлений. Мы также можем извлечь адреса, явно указанные классы складов, стоимость аренды м2 в год.
+
+```{r}
+adderss_class_name <- "address-path--12tl2"
+
+addresses <- parse_many_ads_by_class_name(ads,adderss_class_name)
+addresses[1]
+addresses_text <- lapply(addresses, xml_text) %>% unlist()
+addresses_text[1:3]
+```
+5 элементов соответствуют в данном случае 5-ти частям адреса
+
+Аналогично для классов складов
+```{r}
+classType_class_name <- "header-classType--ECSQ1"
+
+classTypes <- parse_many_ads_by_class_name(ads,classType_class_name)
+classTypes[1]
+classTypes_text <- lapply(classTypes, xml_text) %>% unlist()
+classTypes_text
+```
+Большинство авторов объявлений не указали класс склада явно, но при чтении описаний выяснится, что класс указан именно в них.
+
+Со стоимостью аренды м2 в год сложнее, поскольку ей не соответствует имякласса и какие-либо атрибуты - это просто комментарий в элементе div. Но можно выяснить, что эта информация находится на одном уровне с родителем элемента, который мы нашли для заголовков. Можно использовать эту информацию.
+```{r}
+xml_parent(xml_parent(headers[[1]])) %>% xml_children()
+# или лучше
+xml_siblings(xml_parent(headers[[1]]))
+```
+В первом случае мы перешли по дереву вверх 2 раза, получили дедушку(родителя родителя) исходного элемента, а затем нашли его детей. Звучит забавно, но фактически это так и следует из терминологии xml. Здесь мы получаем список детей, в который входит уже найденный нами родитель, поэтому это избыточно. Во втором случае мы сначала нашли родителя исходного элемента, а затем получили его бартьев-сестер (siblings). В последнем случае мы уже имеем искомый элемент. Для того, чтобы проделать это со всеми объявлениями стоит помнить, что эта информация может быть не указана. Можно было бы использовать проверку длины списка найденных братьев-сестер, но R уже обо всем позаботился и передача xml_nodeset(0) в ф-ю xml_text даст NA
+
+```{r}
+prices_per_year_m2 <- lapply(headers,function(header){xml_siblings(xml_parent(header))})
+prices_per_year_m2_text <- lapply(prices_per_year_m2,xml_text) %>% unlist()
+prices_per_year_m2_text[1:30]
+```
+Если внимательно изучить страницы с объявлениями можно заметить, что объявления, выделенные желтым, могут повторяться на разных страницах и меняться при обновлении одной страницы - все это в рекламных целях. Для нас это означает, что при загрузке данных с разных страниц могут присутствовать дубликаты, а при многократном обращении к одной странице часть объявлений будет меняться. Для удаления дубликатов нужен уникальный идентификатор. Им может служить ссылка на объявление или ее часть, id. Ссылки нам понадобятся, т.к у объявления есть собственная страница с указанием более подробной информации. Подобная ситуация и со многими другими сайтами.
+
+При скачивании данных о множестве однотипных элементов, в данном случае объявлений, нужно с самого начала определить, могут ли встречаться дубликаты и понадобится ли уникальный идентификатор. На практике часто нужно обработать несколько десятков, реже сотен, бывает, что и тысячи страниц. Это занимает продолжительное время, и лучше избежать перезапуска этой процедуры либо путем скачивания сначала документов со всех страниц, либо путем обнаружения и записи уникального идентификатора элементов, если по каким-либо причинам скачать/хранить все документы веб-страниц затруднительно.
+
+Ссылку на страницу объявления можно заметить среди атрибутов найденных нами заголовков.Извлечь ее из тела xml_element/xml_nodeset можно ф-ей xml_attr(xml_el,"имя_атрибута"). Ссылки имеют имя атрибута "href"
+
+```{r}
+links_text <- lapply(headers, function(h){xml_attr(h,"href")}) %>% unlist()
+head(links_text,3)
+tail(links_text,3)
+```
+Запишем данные в таблицу data.frame
+```{r}
+(df <- data.frame(header = headers_text,link = links_text, description = descriptions_text, address  = addresses_text, price_per_year_m2 = prices_per_year_m2_text, classType = classTypes_text))
+str(df)
+```
+
+Выделим уникальные идентификаторы объявлений из ссылок. Нам повезло, дубликатов нет
+```{r}
+ids <- lapply(df$link, function(l){strsplit(as.character(l),"/")[[1]][6]} %>% as.integer) %>%     unlist()
+df$id <- ids
+str(df$id)
+length(unique(df$id))
+```
+Теперь посмотрим на структуру страницы объявления
+```{r}
+
 ```
 
 
+```{r}
+library(ggplot2)
+library(ggmap)
+library(tm)
+library(leaflet)
+library(htmlwidgets)
+```
 
+```{r}
+coords <- geocode(lapply(df$address,function(addr){as.character(addr)})%>%unlist(), output = "latlona")
+str(coords)
+df$latitude <- coords$lat
+df$longitude <- coords$lon
+str(df)
+```
 
+```{r}
+coords_no_na <- drop_na(coords)
+leaflet()%>%addTiles() %>% addCircles(lng=~lon,lat=~lat)
+m <- leaflet() %>%
+  addTiles() %>%  # Add default OpenStreetMap map tiles
+  addMarkers(lng=174.768, lat=-36.852, popup="The birthplace of R")
+m  # Print the map
+
+```
 
