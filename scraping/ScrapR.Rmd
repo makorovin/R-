@@ -2,7 +2,7 @@
 title: "Scrapping_with_R"
 author: "Max"
 date: '28 сентября 2017 г '
-output: github_document
+output: html_document
 ---
 # Скачивание объявлений аренды склада с ЦИАН
 
